@@ -179,17 +179,19 @@ def main():
                 peak_end = int(linecontents[2])
                 # constraint the peak end with respect to the maximum 
                 # length of this chromosome
-                peak_end = min(peak_end, ChrLenList[ChrNameList.index(curr_chr)])
-                interval_start = (int(peak_start / bin_size)) * bin_size
-                if ((peak_end % bin_size) == 0):
-                    interval_end = peak_end
-                else:
-                    interval_end = (int(peak_end / bin_size) + 1) * bin_size
-                for val in range(interval_start, interval_end, bin_size):
-                    curr_key = (curr_chr, val, (val + bin_size))
-                    # mark the corresponding dictionary entry as a peak segment
-                    # since it has an overlap with the MACS2 derived peak intervals
-                    SegmentDict[curr_key]._SetPeak()
+                # provided the chromosome information exists within the current chromosome
+                if curr_chr in ChrNameList:
+                    peak_end = min(peak_end, ChrLenList[ChrNameList.index(curr_chr)])
+                    interval_start = (int(peak_start / bin_size)) * bin_size
+                    if ((peak_end % bin_size) == 0):
+                        interval_end = peak_end
+                    else:
+                        interval_end = (int(peak_end / bin_size) + 1) * bin_size
+                    for val in range(interval_start, interval_end, bin_size):
+                        curr_key = (curr_chr, val, (val + bin_size))
+                        # mark the corresponding dictionary entry as a peak segment
+                        # since it has an overlap with the MACS2 derived peak intervals
+                        SegmentDict[curr_key]._SetPeak()
     
     #=====================================================
     # Now create a list of chromosome intervals for interaction calling
