@@ -218,7 +218,7 @@ if [[ ! -z $FASTQ1 ]] && [[ ! -z $FASTQ2 ]]; then
 
 	# sort the alignment file
 	if [ ! -s $BWADir/$PREFIX.paired.cis.RE.filtered.sorted.bam ]; then
-		samtools sort $BWADir/$PREFIX.paired.cis.RE.filtered.bam $BWADir/$PREFIX.paired.cis.RE.filtered.sorted
+		samtools sort -o $BWADir/$PREFIX.paired.cis.RE.filtered.sorted.bam $BWADir/$PREFIX.paired.cis.RE.filtered.bam 
 	fi
 
 else
@@ -273,7 +273,7 @@ else
 
 		# sort the alignment file
 		if [ ! -s $BWADir/$PREFIX.paired.cis.RE.filtered.sorted.bam ]; then
-			samtools sort $BWADir/$PREFIX.paired.cis.RE.filtered.bam $BWADir/$PREFIX.paired.cis.RE.filtered.sorted
+			samtools sort -o $BWADir/$PREFIX.paired.cis.RE.filtered.sorted.bam $BWADir/$PREFIX.paired.cis.RE.filtered.bam 
 		fi
 
 	else
@@ -316,6 +316,14 @@ fi
 # index the generated bam file
 samtools index $BWADir/$PREFIX.paired.cis.RE.filtered.sorted.nodup.bam
 
+#==============================================
+# convert the duplicate removed BAM file into pairix format
+# the output file name becomes: $BWADir/$PREFIX'.paired.cis.RE.bsorted.pairs.gz'
+# and the corresponding index file becomes $BWADir/$PREFIX'.paired.cis.RE.bsorted.pairs.gz.px2'
+if [[ ! -f $BWADir/$PREFIX'.paired.cis.RE.bsorted.pairs.gz' || ! -s $BWADir/$PREFIX'.paired.cis.RE.bsorted.pairs.gz.px2' ]]; then
+	bam2pairs $BWADir/$PREFIX'.paired.cis.RE.filtered.sorted.nodup.bam' $BWADir/$PREFIX'.paired.cis.RE'
+fi
+
 #===========================================
 # create the short and long range segments from the generated alignment file
 # **** applicable for the PLAC seq pipeline ****
@@ -347,21 +355,38 @@ if [ ! -f $SegDir/$PREFIX.long.bam || ! -f $SegDir/$PREFIX.short.bam ]; then
 	samtools index $SegDir/$PREFIX.short.bam
 fi
 
+#===============================================
+# convert the long and short BAM files into pairix format
+if [[ ! -f $SegDir/$PREFIX'.long.bsorted.pairs.gz' || ! -s $SegDir/$PREFIX'.long.bsorted.pairs.gz.px2' ]]; then
+	bam2pairs $SegDir/$PREFIX.long.bam $SegDir/$PREFIX'.long'
+fi
+if [[ ! -f $SegDir/$PREFIX'.short.bsorted.pairs.gz' || ! -s $SegDir/$PREFIX'.short.bsorted.pairs.gz.px2' ]]; then
+	bam2pairs $SegDir/$PREFIX.short.bam $SegDir/$PREFIX'.short'
+fi
 #===========================================
 # now obtain the peak segments from the generated short read file
 # this will be useful for mapping the peaks from the short segments to the long range reads
 #===========================================
-macs2dir=$OutDir'/PeaksAnchors'
+macs2dir=$OutDir'/PeaksAnchors_ShortSegment'
 mkdir -p $macs2dir
 
 # apply the short range alignment file on MACS2
-if [ ! -f $macs2dir/$PREFIX'_peaks.narrowPeak' ]; then
-	macs2 callpeak -f AUTO -g $GSIZE --keep-dup all --outdir $macs2dir -n $PREFIX --nomodel --extsize 147 --call-summits -t $SegDir/$PREFIX.short.bam
-fi
+# Note: we use the default MACS2 setting for duplicate peaks 
+macs2 callpeak -f AUTO -g $GSIZE --outdir $macs2dir -n $PREFIX --nomodel --extsize 147 --call-summits -t $SegDir/$PREFIX.short.bam
 
-if [ ! -f $macs2dir/$PREFIX'.anchors.bed' ]; then
-	grep -vwE "chrM" $macs2dir/$PREFIX'_peaks.narrowPeak' | sort -k5,5rn - | cut -f1-5 - > $macs2dir/$PREFIX.anchors.bed
-fi
+grep -vwE "chrM" $macs2dir/$PREFIX'_peaks.narrowPeak' | sort -k5,5rn - | cut -f1-5 - > $macs2dir/$PREFIX.anchors.bed
+
+#===========================================
+# here we get the peak segments from the input complete alignment file
+#===========================================
+macs2dir=$OutDir'/PeaksAnchors_ALL'
+mkdir -p $macs2dir
+
+# apply the complete input alignment file on MACS2
+# Note: we use the default MACS2 setting for duplicate peaks 
+macs2 callpeak -f AUTO -g $GSIZE --keep-dup all --outdir $macs2dir -n $PREFIX --nomodel --extsize 147 --call-summits -t $BWADir/$PREFIX.paired.cis.RE.filtered.sorted.nodup.bam
+
+grep -vwE "chrM" $macs2dir/$PREFIX'_peaks.narrowPeak' | sort -k5,5rn - | cut -f1-5 - > $macs2dir/$PREFIX.anchors.bed
 
 #----------------------------------
 # important - sourya
