@@ -3,24 +3,26 @@
 #===========================================================
 # R script for analyzing the statistical significance of interactions
 # this is an implementation of the paper Ay et. al. 2014 (FitHiC)
+# incorporates spline fit for raw contact count
+# also implements the bias calculation and the bias based filtering and spline fit procedure
 
 #Author: Sourya Bhattacharyya
 #Vijay-Ay lab, LJI
-
-# usage: Rscript interaction.r $interaction.file $out_interaction_file $bin_type $drawfig $timing_file
-# parameter description:
-# 1) $interaction.file: Input interaction file (sorted by genomic distance)
-# 2) $out_interaction_file: Output interaction file, with the probability, P value and Q value information
-# 3) $bin_type: binary value depicting the type of binning employed
-# 		0: Equal number of pairs of loci per bin
-# 		1: Equal occupancy (contact counts) bins (default) 
-# 4) Drawfig: binary value. If 1, plots the spline fit curve.
-# 5) $timing_file: If specified, notes the timing information for individual steps of the algorithm
 #===========================================================
 
 library(splines)
 library(fdrtool)
 library(parallel)	# library for parallel processing
+library(optparse)
+
+# column names of the current interaction data
+Interaction_Col_Vec <- c("chr1", "s1", "e1", "chr2", "s2", "e2", "cc", "d1", "isPeak1", "Bias1", "d2", "isPeak2", "Bias2")
+
+# Column numbers containing the bias information
+# specifying the columns in the interaction data where the bias information is provided
+# Sourya - Variable according to the input data settings
+bias1.col <- 10
+bias2.col <- 13
 
 # #===========================
 # # parallel computation of binomial distribution on input vector
@@ -37,103 +39,85 @@ library(parallel)	# library for parallel processing
 
 # #===========================
 
+option_list = list(
+  	make_option(c("--InpFile"), type="character", default=NULL, help="File with interactions + normalization features among individual genomic bins, preferably sorted with respect to interaction distance", metavar="InpFile"),
+	make_option(c("--OutFile"), type="character", default=NULL, help="Output file name storing interactions + probability, P value and Q value", metavar="OutFile"),
+  	make_option(c("--EqLenBin"), type="logical", action="store_true", default=FALSE, help="If TRUE, Equal length bins are used. Default FALSE, means that equal occupancy bins are used. Users need not alter this parameter", metavar="EqLenBin"),
+  	make_option(c("--Norm"), type="integer", action="store", default=0, help="If 0, raw contact count is used. Else, normalized contact count is used before applying FitHiC. Else Default 0.", metavar="Norm"),
+	make_option(c("--BiasLowThr"), type="numeric", default=0.2, help="Lower threshold of bias. Default 0.2", metavar="BiasLowThr"),
+	make_option(c("--BiasHighThr"), type="numeric", default=5, help="Higher threshold of bias. Default 5", metavar="BiasHighThr"),  	
+  	make_option(c("--nbins"), type="integer", action="store", default=200, help="Number of bins employed for FitHiC.", metavar="nbins"),
+  	make_option(c("--Draw"), type="logical", action="store_true", default=FALSE, help="If TRUE, spline fit of FitHiC is plotted. Default FALSE.", metavar="Draw"),
+  	make_option(c("--cccol"), type="integer", action="store", default=7, help="Column number of the file storing the contact count", metavar="cccol"),
+  	make_option(c("--TimeFile"), type="character", default=NULL, help="If specified, denotes the file which will contain time profiling information", metavar="TimeFile"),
+  	make_option(c("--BiasFilt"), type="integer", action="store", default=0, help="If 1, interactions are filtered according to BiasLowThr and BiasHighThr, before processing. Default 0", metavar="BiasFilt"),
+	make_option(c("--ProbBias"), type="integer", action="store", default=0, help="If 1, probability values are multiplied with the bias values. Default 0.", metavar="ProbBias")
+); 
+ 
+opt_parser = OptionParser(option_list=option_list);
+opt = parse_args(opt_parser);
+
+nbins <- as.integer(opt$nbins) # number of bins used in FitHiC
+if (is.null(opt$TimeFile)) {
+	timeprof <- 0
+} else {
+	timeprof <- 1
+}
+
 # number of processors within the system
 ncore <- detectCores()
 cat(sprintf("\n Number of cores in the system: %s ", ncore))
 
-# process input arguments
-args <- commandArgs(TRUE)
-
-# 1st argument is the sorted interaction file
-interaction.file <- args[1]
-
-# second argument is the output file containing the interactions with their relative P and Q values
-# computed using the Spline distribution modeling
-outfile <- args[2]
-
-# we check the binning type
-binning_type <- as.integer(args[3])
-
-# boolean value indicating the use of bias correction
-BiasCorr <- as.integer(args[4])
-
-# number of bins
-nbins <- as.integer(args[5])
-
-# we check if plotting the spline curve is allowed or not
-drawfig <- as.integer(args[6])
-
-# column no having the absolute contact count
-Contact_Col <- as.integer(args[7])
-
-# we check if time profiling is enabled or not
-if (length(args) > 7) {
-	timeprof <- 1
-	timefile <- args[8]
-} else {
-	timeprof <- 0
-}
-
 # directory containing the input interaction file
-inpdir <- dirname(interaction.file)
+inpdir <- dirname(opt$InpFile)
 
 # directory to contain the spline fitted output interaction file
-OutIntDir <- dirname(outfile)
+OutIntDir <- dirname(opt$OutFile)
 
 # this directory will store the spline graph according to the model
 outdir <- paste0(OutIntDir,'/Results')
 system(paste('mkdir -p', outdir))
 
 # this file stores the spline fitted model
-if (binning_type == 0) {
+if (opt$EqLenBin) {
 	plotfile <- paste0(outdir,'/','EqLenBin_SplinePass1.pdf')
 } else {
 	plotfile <- paste0(outdir,'/','EqOccBin_SplinePass1.pdf')	
 }
 
- 
 if (timeprof == 1) {
 	starttime <- Sys.time()
 }
 
 # load the interaction data matrix
 # Note: the data has a header information
-interaction.data <- read.table(interaction.file, header=T)
+# Sourya - Also the column names are assigned according to the columns present in input interaction data
+interaction.data <- read.table(opt$InpFile, header=T)
+colnames(interaction.data) <- Interaction_Col_Vec
 
 if (timeprof == 1) {
 	endtime <- Sys.time()
-	fp <- file(timefile, open="a")
+	fp <- file(opt$TimeFile, open="a")
 	outstr <- paste('\n Time to load the interaction data file in the R structure: ', (endtime - starttime))
 	write(outstr, file=fp, append=T)
 	close(fp)
 }
 
+cat(sprintf("\n Number of unfiltered interactions: %s ", nrow(interaction.data)))
+
 # return if the number of interaction is 0
 if (nrow(interaction.data) == 0) {
-	return
+	return()
 }
 
-# absolute genomic distance for an interaction instance
-gene.dist <- abs(interaction.data[,2] - interaction.data[,5])
-
-# no of interactions pairs
-numPairs <- length(gene.dist)
-cat(sprintf("\n *** Total number of interactions: %s ", numPairs))
-
-# total number of contacts for all the interactions
-TotContact <- sum(interaction.data[,Contact_Col])
-
-# lists the initial (prior) probabilities obtained from the spline fit
+# vector of initial (prior) probabilities for contact counts
 Prob_Val <- c()
 
-# a separate column of the same column length as of 'interaction.data' is used
-# it will store the probability of the observed contact count for a single locus pair
-# binomial distribution + spline based estimation is employed (Ferhat Ay et. al. 2014)
+# probability of the observed contact count for a single locus pair, from the spline fit
 Spline_Binom_Prob_CC <- c()
 
-# a separate column of the same column length as of 'interaction.data' is used
-# it will store the P-value of the observed contact count for a single locus pair
-# binomial distribution + spline based estimation is employed (Ferhat Ay et. al. 2014)
+# P-value of the observed contact count for a single locus pair
+# binomial distribution + spline based estimation
 Spline_Binom_P_Val_CC <- c()
 
 # for each bin, count the no of distinct locus pairs
@@ -147,30 +131,63 @@ prior_contact_prob <- c()
 # average interaction distance for all locus pairs falling within a bin
 avg_int_dist <- c()
 
+#======================================================
+# if normalization using bias values is enabled 
+# then discard the interactions where either loci has bias values outside specified thresholds
+if (opt$Norm == 1) {
+	if (opt$BiasFilt == 1) {
+		interaction.data <- interaction.data[which((interaction.data$Bias1 >= opt$BiasLowThr) & (interaction.data$Bias1 <= opt$BiasHighThr) & (interaction.data$Bias2 >= opt$BiasLowThr) & (interaction.data$Bias2 <= opt$BiasHighThr)), ]
+		cat(sprintf("\n Bias specific filtering is enabled - Number of interactions where both loci satisfy bias criterion: %s ", nrow(interaction.data)))
+	}
+}
+
+#======================================================
+# absolute genomic distance for an interaction instance
+gene.dist <- abs(interaction.data[,2] - interaction.data[,5])
+
+# no of interactions pairs
+numPairs <- length(gene.dist)
+cat(sprintf("\n *** Total number of interactions: %s ", numPairs))
+
+# total number of contacts for all the interactions
+TotContact <- sum(interaction.data[,opt$cccol])
 #=====================================================
 # divide the genomic distance into b quantiles (number of bins)
 
-# Note: for equal length bins (binning_type = 0), each bin would have equal no of entries (pairs of loci)
-# on the other hand, for equal occupancy bins (binning_type = 1), each bin would have equal no of contact count
+# Note: for equal length bins (opt$EqLenBin is TRUE), each bin would have equal no of entries (pairs of loci)
+# on the other hand, for equal occupancy bins (opt$EqLenBin is FALSE), each bin would have equal no of contact count
 # In both cases, however, corresponding bin intervals will be variable
 
 if (timeprof == 1) {
 	starttime <- Sys.time()
 }
 
-if (binning_type == 0) {
+# error condition - sourya
+# if the number of interactions is less than the argument 'nbins'
+# then re-adjust the values of nbins and then assign the 
+# no of entries in each of the bins
+
+if (opt$EqLenBin) {
 	# no of entries (occupancies) for each bin 
 	# each bin have same no of locus pairs
-	nentry <- floor(numPairs / nbins)	
+	if (numPairs < nbins) {
+		nbins <- numPairs
+		nentry <- 1
+	} else {
+		nentry <- floor(numPairs / nbins)
+	}
 } else {
 	# no of contacts for each bin
 	# each bin have same no of contacts
+	if (TotContact < nbins) {
+		nbins <- numPairs
+	}
 	ncontactbin <- floor(TotContact / nbins)
 }
 
 #==============================================
 
-if (binning_type == 0) {
+if (opt$EqLenBin) {
 	# equal length bin case (equal locus entries)
 	for (bin_idx in (1:nbins)) {
 		si <- (bin_idx - 1) * nentry + 1
@@ -180,7 +197,7 @@ if (binning_type == 0) {
 			ei <- numPairs	# last read
 		}
 		no_distinct_loci[bin_idx] <- (ei-si+1)
-		NumContact[bin_idx] <- sum(interaction.data[si:ei,Contact_Col])
+		NumContact[bin_idx] <- sum(interaction.data[si:ei,opt$cccol])
 		avg_contact[bin_idx] <- NumContact[bin_idx] / no_distinct_loci[bin_idx]
 		prior_contact_prob[bin_idx] <- (avg_contact[bin_idx] / TotContact)
 		avg_int_dist[bin_idx] <- mean(gene.dist[si:ei])
@@ -205,7 +222,7 @@ if (binning_type == 0) {
 		idx_list <- which(gene.dist == curr_gene_dist)
 		nelem <- nelem + length(idx_list)
 		ei <- ei + length(idx_list)
-		cumContactCount <- cumContactCount + sum(interaction.data[si:ei, Contact_Col])
+		cumContactCount <- cumContactCount + sum(interaction.data[si:ei, opt$cccol])
 		
 		ValGeneDist <- c(ValGeneDist, curr_gene_dist)
 		nelemSameGeneDist <- c(nelemSameGeneDist, length(idx_list))
@@ -247,7 +264,7 @@ fit <- smooth.spline(avg_int_dist, prior_contact_prob, df=16)
 
 if (timeprof == 1) {
 	endtime <- Sys.time()
-	fp <- file(timefile, open="a")
+	fp <- file(opt$TimeFile, open="a")
 	outstr <- paste('\n Time for spline (df=16): ', (endtime - starttime))
 	write(outstr, file=fp, append=T)
 	close(fp)
@@ -259,7 +276,7 @@ fit2 <- smooth.spline(avg_int_dist, prior_contact_prob, cv=TRUE)
 	
 if (timeprof == 1) {
 	endtime <- Sys.time()
-	fp <- file(timefile, open="a")
+	fp <- file(opt$TimeFile, open="a")
 	outstr <- paste('\n Time for spline (CV): ', (endtime - starttime))
 	write(outstr, file=fp, append=T)
 	close(fp)
@@ -271,7 +288,7 @@ fit.mr <- monoreg(fit$x, fit$y, type="antitonic")
 
 if (timeprof == 1) {
 	endtime <- Sys.time()
-	fp <- file(timefile, open="a")
+	fp <- file(opt$TimeFile, open="a")
 	outstr <- paste('\n Time for antitonic regression on spline (df = 16): ', (endtime - starttime))
 	write(outstr, file=fp, append=T)
 	close(fp)
@@ -283,14 +300,14 @@ fit2.mr <- monoreg(fit2$x, fit2$y, type="antitonic")
 	
 if (timeprof == 1) {
 	endtime <- Sys.time()
-	fp <- file(timefile, open="a")
+	fp <- file(opt$TimeFile, open="a")
 	outstr <- paste('\n Time for antitonic regression on spline (CV): ', (endtime - starttime))
 	write(outstr, file=fp, append=T)
 	close(fp)
 }
 
-# plot the data, if plotting is enabled via the parameter "drawfig"
-if (drawfig == 1) {
+# plot the data, if plotting is enabled via the parameter opt$Draw
+if (opt$Draw) {
 	pdf(plotfile, width=14, height=10)
 	plot(avg_int_dist, prior_contact_prob, cex=0.5, col="darkgrey", xlab="Average interaction distance", ylab="Prior contact probability")
 	title("Smooth spline - antitonic regression - pass 1")
@@ -328,19 +345,23 @@ if (is.unsorted(gene.dist) == TRUE) {
 	for (k in (1:numPairs)) {
 		# probability for this particular interaction is in the y field
 		p <- pp$y[k]
-		if (BiasCorr == 0) {
+		if (opt$Norm == 0) {
 			# model binomial distribution with this probability
-			Spline_Binom_Prob_CC[k] <- dbinom(interaction.data[k, Contact_Col], size=TotContact, prob=p)
+			Spline_Binom_Prob_CC[k] <- dbinom(interaction.data[k, opt$cccol], size=TotContact, prob=p)
 			# compute the p value with respect to the modified distribution
-			Spline_Binom_P_Val_CC[k] <- pbinom(interaction.data[k, Contact_Col], size=TotContact, prob=p, lower.tail=FALSE) + Spline_Binom_Prob_CC[k]
+			Spline_Binom_P_Val_CC[k] <- pbinom(interaction.data[k, opt$cccol], size=TotContact, prob=p, lower.tail=FALSE) + Spline_Binom_Prob_CC[k]
 			# store the prior probability
 			Prob_Val[k] <- p
 		} else {
 			# model binomial distribution with the product of probability, and the bias values of two segments
-			curr_prob <- p * interaction.data[k, (Contact_Col + 1)] * interaction.data[k, (Contact_Col + 3)]
-			Spline_Binom_Prob_CC[k] <- dbinom(interaction.data[k, Contact_Col], size=TotContact, prob=curr_prob)
+			if (opt$ProbBias == 1) {
+				curr_prob <- p * interaction.data[k, bias1.col] * interaction.data[k, bias2.col]	
+			} else {
+				curr_prob <- p
+			}
+			Spline_Binom_Prob_CC[k] <- dbinom(interaction.data[k, opt$cccol], size=TotContact, prob=curr_prob)
 			# compute the p value with respect to the modified distribution
-			Spline_Binom_P_Val_CC[k] <- pbinom(interaction.data[k, Contact_Col], size=TotContact, prob=curr_prob, lower.tail=FALSE) + Spline_Binom_Prob_CC[k]
+			Spline_Binom_P_Val_CC[k] <- pbinom(interaction.data[k, opt$cccol], size=TotContact, prob=curr_prob, lower.tail=FALSE) + Spline_Binom_Prob_CC[k]
 			# store the prior probability
 			Prob_Val[k] <- p
 		}
@@ -357,7 +378,7 @@ if (is.unsorted(gene.dist) == TRUE) {
 
 	if (timeprof == 1) {
 		endtime <- Sys.time()
-		fp <- file(timefile, open="a")
+		fp <- file(opt$TimeFile, open="a")
 		outstr <- paste('\n Time to find unique indices in genomic distance: ', (endtime - starttime))
 		write(outstr, file=fp, append=T)
 		close(fp)
@@ -384,9 +405,9 @@ if (is.unsorted(gene.dist) == TRUE) {
 		#==========================
 		# compute the probability distribution for the current interval
 		#==========================
-		if (BiasCorr == 0) {
-			curr_dbinom <- dbinom(interaction.data[si:ei, Contact_Col], size=TotContact, prob=p)
-			curr_pbinom <- pbinom(interaction.data[si:ei, Contact_Col], size=TotContact, prob=p, lower.tail=FALSE)
+		if (opt$Norm == 0) {
+			curr_dbinom <- dbinom(interaction.data[si:ei, opt$cccol], size=TotContact, prob=p)
+			curr_pbinom <- pbinom(interaction.data[si:ei, opt$cccol], size=TotContact, prob=p, lower.tail=FALSE)
 			# append the distribution to the final vector
 		 	Spline_Binom_Prob_CC <- c(Spline_Binom_Prob_CC, curr_dbinom)
 		 	Spline_Binom_P_Val_CC <- c(Spline_Binom_P_Val_CC, (curr_dbinom + curr_pbinom))	
@@ -398,9 +419,9 @@ if (is.unsorted(gene.dist) == TRUE) {
 			# comment - sourya
 			# for (idx in (si:ei)) {
 			# 	# model binomial distribution with the product of probability, and the bias values of two segments
-			# 	curr_prob <- p * interaction.data[idx, (Contact_Col + 1)] * interaction.data[idx, (Contact_Col + 3)]
-			# 	curr_dbinom <- dbinom(interaction.data[idx, Contact_Col], size=TotContact, prob=curr_prob)
-			# 	curr_pbinom <- pbinom(interaction.data[idx, Contact_Col], size=TotContact, prob=curr_prob, lower.tail=FALSE)
+			# 	curr_prob <- p * interaction.data[idx, (opt$cccol + 1)] * interaction.data[idx, (opt$cccol + 3)]
+			# 	curr_dbinom <- dbinom(interaction.data[idx, opt$cccol], size=TotContact, prob=curr_prob)
+			# 	curr_pbinom <- pbinom(interaction.data[idx, opt$cccol], size=TotContact, prob=curr_prob, lower.tail=FALSE)
 			# 	# append the distribution to the final vector
 			#  	Spline_Binom_Prob_CC[idx] <- curr_dbinom
 			#  	Spline_Binom_P_Val_CC[idx] <- (curr_dbinom + curr_pbinom)	
@@ -416,8 +437,12 @@ if (is.unsorted(gene.dist) == TRUE) {
 			# the second argument 1 means that individual rows of matrix is processed 
 			# in the parallel computation
 			result_binomdistr <- as.data.frame(parallel:::mclapply( si:ei , mc.cores = ncore , function(idx){
-				cc <- interaction.data[idx, Contact_Col]
-				pr <- p * interaction.data[idx, (Contact_Col + 1)] * interaction.data[idx, (Contact_Col + 3)]
+				cc <- interaction.data[idx, opt$cccol]
+				if (opt$ProbBias == 1) {
+					pr <- p * interaction.data[idx, bias1.col] * interaction.data[idx, bias2.col]
+				} else {
+					pr <- p
+				}
 				db <- dbinom(cc, size=TotContact, prob=pr)
 				pb <- pbinom(cc, size=TotContact, prob=pr, lower.tail=FALSE)
 				return(c(idx,pr,db,(db+pb)))
@@ -444,7 +469,7 @@ if (is.unsorted(gene.dist) == TRUE) {
 
 	if (timeprof == 1) {
 		endtime <- Sys.time()
-		fp <- file(timefile, open="a")
+		fp <- file(opt$TimeFile, open="a")
 		outstr <- paste('\n Time for Spline based distribution compute (p value) (sorted interaction file): ', (endtime - starttime))
 		write(outstr, file=fp, append=T)
 		close(fp)
@@ -460,7 +485,7 @@ Spline_Binom_QVal <- p.adjust(Spline_Binom_P_Val_CC, method = "BH")
 
 if (timeprof == 1) {
 	endtime <- Sys.time()
-	fp <- file(timefile, open="a")
+	fp <- file(opt$TimeFile, open="a")
 	outstr <- paste('\n Time to compute Q value (from P value) in spline: ', (endtime - starttime))
 	write(outstr, file=fp, append=T)
 	close(fp)
@@ -476,24 +501,24 @@ colnames(FinalData) <- c(colnames(interaction.data), "p", "dbinom", "P-Value", "
 
 # append the Spline distribution probability and corresponding P value as separate columns
 # and write in a separate text file
-temp_outfile <- paste0(inpdir, '/', 'temp_out.bed')
+temp_outfile <- paste0(OutIntDir, '/', 'temp_out.bed')
 write.table(FinalData, temp_outfile, row.names = FALSE, col.names = TRUE, sep = "\t", quote=FALSE, append=FALSE) 
 
 # now sort the file contents and write that in the final specified output file
-system(paste('sort -k1,1 -k2,2n -k5,5n', paste0('-k',Contact_Col,',',Contact_Col,'nr'), temp_outfile, '>', outfile))
+system(paste('sort -k1,1 -k2,2n -k5,5n', paste0('-k',opt$cccol,',',opt$cccol,'nr'), temp_outfile, '>', opt$OutFile))
 # delete the temporary output file
 system(paste('rm', temp_outfile))
 
 # # sort the data according to the chromosome name, start positions of both the interacting segments
 # # and finally with the decreasing contact count
-# FinalData <- FinalData[order( FinalData[,1], FinalData[,2], FinalData[,5], -FinalData[,Contact_Col] ), ]
+# FinalData <- FinalData[order( FinalData[,1], FinalData[,2], FinalData[,5], -FinalData[,opt$cccol] ), ]
 
 # # write the data with the header information
-# write.table(FinalData, outfile, row.names = FALSE, col.names = TRUE, sep = "\t", quote=FALSE, append=FALSE)
+# write.table(FinalData, opt$OutFile, row.names = FALSE, col.names = TRUE, sep = "\t", quote=FALSE, append=FALSE)
 
 if (timeprof == 1) {
 	endtime <- Sys.time()
-	fp <- file(timefile, open="a")
+	fp <- file(opt$TimeFile, open="a")
 	outstr <- paste('\n Time to write the interaction data (with Q value) for spline based distribution: ', (endtime - starttime))
 	write(outstr, file=fp, append=T)
 	close(fp)

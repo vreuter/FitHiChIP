@@ -89,8 +89,18 @@ Binom_P_Val_CC <- c()
 # Note: each bin would have equal no of entries
 # but the corresponding bin interval will be variable
 
-# no of entries (occupancies) for each bin (no of pairs)
-nentry <- floor(numPairs / nbins)
+
+# error condition - sourya
+# if the number of interactions is less than the argument 'nbins'
+# then re-adjust the values of nbins and then assign the 
+# no of entries in each of the bins
+if (numPairs < nbins) {
+	nbins <- numPairs
+	nentry <- 1
+} else {
+	# no of entries (occupancies) for each bin (no of pairs)
+	nentry <- floor(numPairs / nbins)	
+}
 
 # cat(sprintf("\n numPairs: %s  nbins: %s  nentry: %s \n ", numPairs, nbins, nentry))
 
