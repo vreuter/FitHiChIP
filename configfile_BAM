@@ -1,0 +1,133 @@
+#====================================
+# Sample configuration file
+# for running FitHiChIP
+# Sample values of these parameters are also specified
+#==================================== 
+
+#**************************************
+# Parameters used for processing input files of any format
+#**************************************
+
+#==========================
+# file and directory paths
+#==========================
+
+# Input file (BAM / PAIRIX alignment, or valid pairs from HiCPro pipeline)
+# BAM formatted alignment file name should end with ".bam"
+# Valid pairs file can be gzipped or plain text file
+# mandatory parameter
+InpFile=/path/to/bam/inp.bam
+
+# Peak detection file
+# mandatory parameter
+PeakFile=/path/to/bam/inp.narrowPeak
+
+# Output directory under which all results are stored
+OutDir=/path/to/OutDir
+
+#======================================
+# Numerical parameters regarding the execution of FitHiChIP
+# and for the contact estimation
+#======================================
+
+# Size of the bins [default = 5000], in bases, for detecting the interactions.
+BINSIZE=5000
+
+# Lower distance threshold of interaction between two segments 
+# (default = 20000 or 20 Kb)
+LowDistThr=20000
+
+# Upper distance threshold of interaction between two segments 
+# (default = 2000000 or 2 Mb)
+UppDistThr=2000000
+
+# Minimum FDR (q-value) cutoff for significant interaction detection
+QVALUE=0.01
+
+# In the FitHiC model, this is the max no of equal occupancy bins (Default 200) 
+NBins=200
+
+# The following parameter (1 or 0), if 1, means that interactions need to be filtered according to the bias values
+# otherwise, no pre-filtering of the interactions take place
+# Default value of this parameter is 1
+# recommended: 1
+BeginBiasFilter=1
+
+# The following parameter (1 or 0), if 1, means that P value of any interaction is computed by accounting the bias values
+# here the bias correction is enabled
+# otherwise, default P value (estimated from spline fit probability) is estimated
+# Default value of this parameter is 1
+# recommended: 1
+EndBiasFilter=1
+
+# if "BeginBiasFilter" parameter is set as 1, following two parameters denote the interval of bias values within which the interactions would be retained
+# default lower bias cutoff is set as 0.2
+# recommended to use this value
+biaslowthr=0.2
+
+# default higher cutoff of bias values is set as 5
+# requires "BeginBiasFilter" parameter to be 1
+# recommended to use this value
+biashighthr=5
+
+# the following parameter (1 or 0), if 1, means that interactions close to each other (due to their originating bins are closer) are merged 
+# to represent a single interaction
+# default: 1
+MergeInt=1
+
+#==============================
+# Miscellaneous parameters
+#==============================
+
+# prefix string of the output files (Default = 'FitHiChIP').
+PREFIX=FitHiChIP
+
+# Specified as 1 or 0. If 1, draws the figures of various 
+# statistics / analysis. Default 0.
+Draw=0
+
+# Specified as 1 or 0. If 1, generates a timing profile (time taken to run individual steps). 
+# Default 0.
+TimeProf=1
+
+#**************************************
+# parameters specific to processing BAM or PAIRIX alignment files
+#**************************************
+
+# Type of interaction / contacts to be obtained
+# 1: Peak to Peak - interaction between two peaks - resembles ChIA PET experiment
+# 2: Peak to Non Peak - interaction between a peak and a non peak
+# 0: Peak to ALL - combines types 1 and 2 - preferred interaction type for PLAC seq and HiChIP data
+# 3: ALL to ALL - interactions between every pairs of binned intervals. Similar to Hi-C experiment.
+IntType=0
+
+# number of threads applied for finding the interactions (according to the above mentioned interaction type)
+Threads=1
+
+# Genome size parameter for MACS2 (if peaks are to be computed from input alignment BAM file). Default = 'hs'
+GSIZE=hs
+
+#**************************************
+# parameters specific to processing HiC-pro generated validpairs file
+#**************************************
+
+# File containing the bin intervals (according to a specified bin size)
+# which is an output of HiC-pro pipeline
+# If not provided, this is computed from the input valid pairs file
+Interval=
+
+# File storing the contact matrix obtained from the valid pairs input file
+# should be accompanied with the interval file
+# if not specified, computed from the valid pairs input file
+Matrix=
+
+# File containing the information of reference chromosome size
+ChrSizeFile=
+
+# Base directory of HiC-pro package. 
+# Required if the interval or matrix files are not provided as inputs
+# and are to be computed from the valid pairs file
+HiCProBasedir=
+
+
+
