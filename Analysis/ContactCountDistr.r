@@ -6,13 +6,18 @@
 #Author: Sourya Bhattacharyya
 #Vijay-Ay lab, LJI
 
-# usage: Rscript ContactCountDistr.r $PeakFile $InteractionFile $PlotFile $OutText
+# usage: Rscript ContactCountDistr.r $PeakFile $PeakContactFile $PlotFile $OutText
+# PeakFile: Input peak file (3 columns)
+# PeakContactFile: Bin specific significant contact count information (4 columns)
+# PlotFile: Output file storing the plots
+# OutText: Output text file
 #===========================================================
+suppressMessages(library(GenomicRanges))
 
 args <- commandArgs(TRUE)
 
 PeakFile <- args[1]
-InteractionFile <- args[2]
+PeakContactFile <- args[2]
 PlotFile <- args[3]
 OutText <- args[4]
 
@@ -20,52 +25,32 @@ OutText <- args[4]
 PD <- read.table(PeakFile, header=FALSE)
 
 # peaks from the interaction file (PI = peaks from interactions)
-PI <- read.table(InteractionFile, header=FALSE)
+PI <- read.table(PeakContactFile, header=TRUE)
 
-# significant contact count (filtered according to Q value) for individual peaks
+#===========================
+# comparison of the reference peaks with the first three fields of bin specific contact count file
+#===========================
+# Output: matrix of 2 columns
+# 1st column: line no in first data (inp)
+# second column: line no in second data (out)
+Overlap_Peaks <- as.data.frame(findOverlaps(GRanges(PD[,1], IRanges(PD[,2], PD[,3])),GRanges(PI[,1], IRanges(PI[,2], PI[,3]))))
+
+# This vector stores the significant contact count (filtered according to Q value) 
+# for individual peaks
 count <- c()
 
 for (i in (1:nrow(PD))) {
-	chr1 <- as.character(PD[i,1])
-	s1 <- as.integer(PD[i,2])
-	e1 <- as.integer(PD[i,3])
-
-	# cat(sprintf("\n\n ===>>> checking chr1: %s s1: %s e1: %s \n ", chr1, s1, e1))
-
-	# overlap between peaks in the peak file and in the interaction file
-	# comparison with respect to three columns
-	# note: use of '&' operator
-	c <- 0
-
-	# set of indices matching with chr1
-	idx <- which(PI[,1] == chr1)
-
-	# cat(sprintf("\n idx: %s \n length of idx: %s \n ", idx, length(idx)))
-
+	# check if this peak is associated with any interactions
+	# this is done by finding the row in "Overlap_Peaks" whose first element is i
+	idx <- which(Overlap_Peaks[,1] == i)
 	if (length(idx) > 0) {
-		for (j_idx in (1:length(idx))) {
-			j <- idx[j_idx]
-
-			chr2 <- as.character(PI[j,1])
-			s2 <- as.integer(PI[j,2])
-			e2 <- as.integer(PI[j,3])
-
-			# cat(sprintf("\n --- individual  chr1: %s  s1: %s  e1: %s chr2: %s s2: %s e2: %s \n ", chr1, s1, e1, chr2, s2, e2)) 		
-
-			if ((!is.na(s1)) & (!is.na(e1)) & (!is.na(s2)) & (!is.na(e2))) {
-				if ((s2 <= s1) & (e2 >= e1)) {
-					c <- c + 1
-				} else if ((s2 >= s1) & (e2 <= e1)) {
-					c <- c + 1
-				} else if ((s2 <= s1) & (e2 >= s1)) {
-					c <- c + 1
-				} else if ((s2 <= e1) & (e2 >= e1)) {
-					c <- c + 1
-				}			
-			}
-		}		
+		# this vector stores the row numbers of the overlapping interactions with the given peak segment
+		IntRows <- Overlap_Peaks[idx,2]
+		# the contact count information is in the column number provided as an input
+		count[i] <- sum(PI[IntRows, 4])
+	} else {
+		count[i] <- 0
 	}
-	count[i] <- c
 }
 
 # dump the original peaks vs significant contact count in a text file
