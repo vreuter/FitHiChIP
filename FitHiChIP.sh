@@ -43,7 +43,7 @@ PeakFILE=""
 PREFIX='FitHiChIP'
 
 # number of threads employed for interaction / contact detection
-THREADS=1
+Threads=1
 
 # genome size parameter for MACS2
 GSIZE='hs'
